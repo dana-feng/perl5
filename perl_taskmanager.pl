@@ -96,6 +96,18 @@ sub load_tasks {
     my $data = decode_json($json_text);
     
     for my $task_data (@{$data->{tasks} || []}) {
+        # Ensure all required fields have default values
+        $task_data->{id} //= '';
+        $task_data->{title} //= '';
+        $task_data->{description} //= '';
+        $task_data->{status} //= 'pending';
+        $task_data->{priority} //= 'medium';
+        $task_data->{created_at} //= DateTime->now->iso8601;
+        $task_data->{updated_at} //= DateTime->now->iso8601;
+        $task_data->{assigned_to} //= undef;
+        $task_data->{tags} //= [];
+        $task_data->{due_date} //= undef;
+        
         my $task = TaskManager::Task->new(%$task_data);
         $self->{tasks}->{$task->{id}} = $task;
     }
@@ -161,13 +173,13 @@ sub new {
     my $self = {
         storage => $storage,
         commands => {
-            add => \&cmd_add,
-            list => \&cmd_list,
-            show => \&cmd_show,
-            update => \&cmd_update,
-            delete => \&cmd_delete,
-            complete => \&cmd_complete,
-            help => \&cmd_help,
+            add => 'cmd_add',
+            list => 'cmd_list',
+            show => 'cmd_show',
+            update => 'cmd_update',
+            delete => 'cmd_delete',
+            complete => 'cmd_complete',
+            help => 'cmd_help',
         }
     };
     
@@ -180,10 +192,48 @@ sub run {
     my $command = shift @args || 'help';
     
     if (exists $self->{commands}->{$command}) {
-        $self->{commands}->{$command}->($self, @args);
+        my $method = $self->{commands}->{$command};
+        $self->$method(@args);
     } else {
         say "Unknown command: $command";
         $self->cmd_help();
+    }
+}
+
+sub cmd_list {
+    my ($self, @args) = @_;
+    
+    my @tasks = $self->{storage}->get_all_tasks();
+    
+    if (@args && $args[0] eq '--status') {
+        my $status = $args[1] or die "Usage: list --status <status>";
+        @tasks = grep { $_->{status} eq $status } @tasks;
+    }
+    
+    if (@tasks) {
+        say sprintf("%-15s %-10s %-30s %-15s", "ID", "Status", "Title", "Updated");
+        say "-" x 70;
+        
+        for my $task (sort { 
+            my $a_date = $a->{created_at} // '';
+            my $b_date = $b->{created_at} // '';
+            $a_date cmp $b_date 
+        } @tasks) {
+            my $updated = '';
+            if ($task->{updated_at}) {
+                $updated = substr($task->{updated_at}, 0, 10);
+            }
+            
+            my $title = $task->{title} // '';
+            my $status = $task->{status} // '';
+            my $id = $task->{id} // '';
+            
+            say sprintf("%-15s %-10s %-30s %-15s", 
+                $id, $status, 
+                substr($title, 0, 30), $updated);
+        }
+    } else {
+        say "No tasks found.";
     }
 }
 
@@ -203,31 +253,6 @@ sub cmd_add {
     
     $self->{storage}->add_task($task);
     say "Added task: $id - $title";
-}
-
-sub cmd_list {
-    my ($self, @args) = @_;
-    
-    my @tasks = $self->{storage}->get_all_tasks();
-    
-    if (@args && $args[0] eq '--status') {
-        my $status = $args[1] or die "Usage: list --status <status>";
-        @tasks = grep { $_->{status} eq $status } @tasks;
-    }
-    
-    if (@tasks) {
-        say sprintf("%-15s %-10s %-30s %-15s", "ID", "Status", "Title", "Updated");
-        say "-" x 70;
-        
-        for my $task (sort { $a->{created_at} cmp $b->{created_at} } @tasks) {
-            my $updated = substr($task->{updated_at}, 0, 10);
-            say sprintf("%-15s %-10s %-30s %-15s", 
-                $task->{id}, $task->{status}, 
-                substr($task->{title}, 0, 30), $updated);
-        }
-    } else {
-        say "No tasks found.";
-    }
 }
 
 sub cmd_show {
